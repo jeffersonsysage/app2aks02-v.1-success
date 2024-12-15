@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      # imagePullSecrets: {{ .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.backend.imagePullSecrets | nindent 8 }}  # 引用 imagePullSecrets
+      containers:
+      - name: backend
+        # image: {{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}
+        image: {{ .Values.backend.image.repository }}:380
+        imagePullPolicy: Always  # 确保每次都尝试拉取最新镜像
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 5000
+    targetPort: 5000

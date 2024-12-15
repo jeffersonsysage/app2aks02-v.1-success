@@ -1,0 +1,43 @@
+trigger: none
+
+variables:
+  - group: acr-credentials
+
+stages:
+- stage: Build
+  jobs:
+  - job: BuildAndPush
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'your-acr-connection'
+        repository: 'frontend'
+        command: 'buildAndPush'
+        Dockerfile: 'frontend/Dockerfile'
+    
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'your-acr-connection'
+        repository: 'backend'
+        command: 'buildAndPush'
+        Dockerfile: 'backend/Dockerfile'
+
+- stage: Deploy
+  jobs:
+  - job: DeployToAKS
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: HelmDeploy@0
+      inputs:
+        connectionType: 'Azure Resource Manager'
+        azureSubscription: 'your-azure-subscription'
+        azureResourceGroup: 'your-resource-group'
+        kubernetesCluster: 'your-aks-cluster'
+        namespace: 'default'
+        command: 'upgrade'
+        chartType: 'FilePath'
+        chartPath: 'manifests/helm'
+        overrideValues: 'frontend.image.tag=$(Build.BuildId),backend.image.tag=$(Build.BuildId)'

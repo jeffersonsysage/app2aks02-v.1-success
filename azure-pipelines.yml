@@ -1,0 +1,130 @@
+# Deploy to Azure Kubernetes Service
+# Build and push image to Azure Container Registry; Deploy to Azure Kubernetes Service
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+trigger: none
+
+resources:
+- repo: self
+
+variables:
+
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: '2ae680c2-0af3-46d6-b55c-5e5cecb0ebfb'
+  # imageRepository: 'appaksv'
+  frontend-imageRepository: 'frontend'
+  backend-imageRepository: 'backend'
+  frontend-dockerfilePath: '**/frontend/Dockerfile'
+  backend-dockerfilePath: '**/backend/Dockerfile'
+  helmReleaseName: 'my-app'
+  containerRegistry: 'akslabacr1211.azurecr.io'
+  dockerfilePath: '**/Dockerfile'
+  tag: '$(Build.BuildId)'
+  imagePullSecret: 'akslabacr1211fa81-auth'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+    - task: Docker@2
+      displayName: Build frontend and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(frontend-imageRepository)
+        dockerfile: $(frontend-dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+    - task: Docker@2
+      displayName: Build backend and push an image to container registry
+      inputs:
+        command: buildAndPush
+        repository: $(backend-imageRepository)
+        dockerfile: $(backend-dockerfilePath)
+        containerRegistry: $(dockerRegistryServiceConnection)
+        tags: |
+          $(tag)
+
+    - publish: manifests
+      artifact: manifests
+
+- stage: Deploy
+  displayName: Deploy stage
+  dependsOn: Build
+
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'app2aks02v1.default'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: createSecret
+              secretName: $(imagePullSecret)
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+
+          # - task: KubernetesManifest@0
+          #   displayName: Deploy to Kubernetes cluster
+          #   inputs:
+          #     action: deploy
+          #     manifests: |
+          #       $(Pipeline.Workspace)/manifests/deployment.yml
+          #       $(Pipeline.Workspace)/manifests/service.yml
+          #     imagePullSecrets: |
+          #       $(imagePullSecret)
+          #     containers: |
+          #       $(containerRegistry)/$(imageRepository):$(tag)
+          
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'Azure subscription 1(cdb3c53c-748d-4257-acea-4755d79164da)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az aks get-credentials --resource-group akslab1122 --name akslabcluster1211
+                export KUBECONFIG=$HOME/.kube/config
+                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+                helm repo update
+                helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
+
+          # - script: |
+          #     helm uninstall my-app || true
+          #   displayName: 'Uninstall existing release'
+
+          - task: HelmDeploy@0
+            inputs:
+              # connectionType: 'Azure Resource Manager'
+              # azureSubscription: 'your-azure-subscription'
+              # azureResourceGroup: 'your-resource-group'
+              # kubernetesCluster: 'your-aks-cluster'
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceConnection: 'conn-aks1215v1'
+              namespace: 'default'
+              releaseName: '$(helmReleaseName)'
+              # command: 'upgrade'
+              command: 'install'
+              chartType: 'FilePath'
+              # chartPath: 'manifests/HELM'
+              chartPath: '$(Pipeline.Workspace)/manifests/HELM'
+              # overrideValues: 'frontend.image.tag=$(Build.BuildId),backend.image.tag=$(Build.BuildId),frontend.imagePullSecrets=$(imagePullSecret),backend.imagePullSecrets=$(imagePullSecret)'
+              
+              overrideValues: |
+                frontend.image.tag=$(Build.BuildId)
+                backend.image.tag=$(Build.BuildId)
+                frontend.imagePullSecrets[0].name=$(imagePullSecret)
+                backend.imagePullSecrets[0].name=$(imagePullSecret)
